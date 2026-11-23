@@ -1,0 +1,130 @@
+services:
+  db:
+    image: ${MYSQL_IMAGE:-mysql:8.4}
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ppt_voice
+      MYSQL_USER: ppt_voice
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?请在 .env 中设置 MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?请在 .env 中设置 MYSQL_ROOT_PASSWORD}
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  api:
+    build:
+      context: ./backend
+      args:
+        PYTHON_BASE_IMAGE: ${PYTHON_BASE_IMAGE:-python:3.12-slim}
+        FFMPEG_IMAGE: ${FFMPEG_IMAGE:-mwader/static-ffmpeg:7.1}
+    restart: unless-stopped
+    command:
+      - sh
+      - -c
+      - alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000
+    environment: &app_env
+      DATABASE_URL: mysql+pymysql://ppt_voice:${MYSQL_PASSWORD}@db:3306/ppt_voice?charset=utf8mb4
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-local}
+      STORAGE_DIR: /data
+      MOCK_DIFY: ${MOCK_DIFY:-false}
+      MOCK_DIFY_DELAY: ${MOCK_DIFY_DELAY:-1.5}
+      DIFY_BASE_URL: ${DIFY_BASE_URL:-https://api.dify.ai/v1}
+      DIFY_API_KEY: ${DIFY_API_KEY:-}
+      DIFY_FILE_INPUT: ${DIFY_FILE_INPUT:-ppt_file}
+      DIFY_VOICE_INPUT: ${DIFY_VOICE_INPUT:-voice}
+      DIFY_SPEED_INPUT: ${DIFY_SPEED_INPUT:-speed}
+      DIFY_AUDIO_OUTPUT: ${DIFY_AUDIO_OUTPUT:-audio}
+      DIFY_TEXT_OUTPUT: ${DIFY_TEXT_OUTPUT:-transcript}
+      DIFY_RESPONSE_MODE: ${DIFY_RESPONSE_MODE:-blocking}
+      DIFY_CONNECT_TIMEOUT: ${DIFY_CONNECT_TIMEOUT:-10}
+      DIFY_READ_TIMEOUT: ${DIFY_READ_TIMEOUT:-600}
+      DIFY_TOTAL_TIMEOUT: ${DIFY_TOTAL_TIMEOUT:-660}
+      DIFY_MAX_RETRIES: ${DIFY_MAX_RETRIES:-3}
+      DIFY_RETRY_BACKOFF: ${DIFY_RETRY_BACKOFF:-1.5}
+      DIFY_AUDIO_ALLOWED_HOSTS: ${DIFY_AUDIO_ALLOWED_HOSTS:-}
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-52428800}
+      AVATAR_MAX_BYTES: ${AVATAR_MAX_BYTES:-10485760}
+      VIDEO_WIDTH: ${VIDEO_WIDTH:-1280}
+      VIDEO_HEIGHT: ${VIDEO_HEIGHT:-720}
+      VIDEO_MAX_BYTES: ${VIDEO_MAX_BYTES:-524288000}
+      VIDEO_RENDER_TIMEOUT: ${VIDEO_RENDER_TIMEOUT:-1800}
+      FFMPEG_BIN: ${FFMPEG_BIN:-ffmpeg}
+      FFPROBE_BIN: ${FFPROBE_BIN:-ffprobe}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - app_data:/data
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5)
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  worker:
+    build:
+      context: ./backend
+      args:
+        PYTHON_BASE_IMAGE: ${PYTHON_BASE_IMAGE:-python:3.12-slim}
+        FFMPEG_IMAGE: ${FFMPEG_IMAGE:-mwader/static-ffmpeg:7.1}
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker"]
+    environment: *app_env
+    volumes:
+      - app_data:/data
+    depends_on:
+      db:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+
+  video-worker:
+    build:
+      context: ./backend
+      args:
+        PYTHON_BASE_IMAGE: ${PYTHON_BASE_IMAGE:-python:3.12-slim}
+        FFMPEG_IMAGE: ${FFMPEG_IMAGE:-mwader/static-ffmpeg:7.1}
+    restart: unless-stopped
+    command: ["python", "-m", "app.workers.video_worker"]
+    environment: *app_env
+    volumes:
+      - app_data:/data
+    depends_on:
+      db:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        NODE_BASE_IMAGE: ${NODE_BASE_IMAGE:-node:20-alpine}
+        NGINX_BASE_IMAGE: ${NGINX_BASE_IMAGE:-nginx:1.27-alpine}
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${WEB_PORT:-8080}:80"
+
+volumes:
+  mysql_data:
+  app_data:

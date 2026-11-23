@@ -1,0 +1,32 @@
+# 环境与密钥
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 前端
+node_modules/
+dist/
+.vite/
+npm-debug.log*
+
+# 运行数据与本地数据库
+data/
+backend/data/
+*.db
+*.sqlite3
+
+# Docker / 编辑器 / 系统
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
